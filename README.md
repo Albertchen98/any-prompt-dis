@@ -1,170 +1,245 @@
-# FlowDIS: Language-Guided Dichotomous Image Segmentation with Flow Matching
+# Any Prompt DIS — Dichotomous Image Segmentation from Any Prompt
 
-<div align="center">
-  <a href="https://scholar.google.com/citations?user=cg74A98AAAAJ&hl=en">Andranik Sargsyan</a>, <a href="https://scholar.google.com/citations?user=VJSh59sAAAAJ&hl=en">Shant Navasardyan</a>
-</div>
-<div align="center">
-  Picsart AI Research (PAIR)
-</div>
+**Any Prompt DIS** adds a vision-language **grounding** layer on top of
+[FlowDIS](https://flowdis.github.io/), so you can isolate an object from a **complex
+natural-language description**, a **single click**, or a **manual box** — not just a single
+keyword. A VLM reasons about which object you mean and locates it (bounding box + a concise
+*object prompt*); we crop that region and let FlowDIS produce a clean, high-detail matte.
 
-<br/>
-
-<div align="center" style="display: flex; justify-content: center; flex-wrap: wrap; margin-bottom: 3px;"> 
-  <a href='https://arxiv.org/abs/2605.05077'><img src='https://img.shields.io/badge/arXiv-Paper-red?logo=arXiv&logoColor=red'></a>&ensp; 
-  <a href='https://flowdis.github.io/'><img src='https://img.shields.io/badge/Page-Project-blue'></a>&ensp; 
-  <a href="https://huggingface.co/spaces/PAIR/FlowDIS"><img src="https://img.shields.io/badge/Hugging%20Face-Space-yellow?logo=huggingface" alt="HuggingFace Space"></a>&ensp;
-  <a href='https://drive.google.com/drive/folders/1xWRlwnNbfELDqduPxJ6Z04xP2-9zfaJj?usp=sharing'><img src='https://img.shields.io/badge/Google%20Drive-Stuff-green?logo=googledrive&logoColor=green'></a>&ensp;
-</div>
-
-<br/>
+> Built on top of FlowDIS (Picsart AI Research, CVPR 2026). The FlowDIS core under
+> [`flowdis/`](flowdis/) is upstream; this project adds the [`agent/`](agent/) grounding
+> layer and CLIs. See [Credits](#credits) and [License](#license).
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)"  srcset="assets/teaser-dark.avif">
-    <source media="(prefers-color-scheme: light)" srcset="assets/teaser-light.avif">
-    <img src="assets/teaser-light.avif" alt="FlowDIS teaser" width="100%">
-  </picture>
+  <a href='https://arxiv.org/abs/2605.05077'><img src='https://img.shields.io/badge/FlowDIS-arXiv-red?logo=arXiv&logoColor=red'></a>&ensp;
+  <a href='https://flowdis.github.io/'><img src='https://img.shields.io/badge/FlowDIS-Project%20Page-blue'></a>&ensp;
+  <a href="https://huggingface.co/PAIR/FlowDIS"><img src="https://img.shields.io/badge/Weights-PAIR%2FFlowDIS-yellow?logo=huggingface"></a>
 </p>
 
+---
+
+## Demos
+
+> Full-quality MP4s are committed under [`assets/demo/`](assets/demo/) and embedded with
+> `<video>` tags. **Replace `<your-org>` with your GitHub org/user** after you push, so the raw
+> URLs resolve and GitHub renders the inline player. (Alternatively, drag-drop each `.mp4` into
+> the README editor on github.com and paste the generated `user-attachments` URL — that also
+> auto-embeds and is fully self-contained.)
+
+**Text prompt** — disambiguate with language ("the tall bridge tower on the left, not the one on the right"):
+
 <p align="center">
-<i>FlowDIS enables highly accurate foreground segmentation, optionally guided by a text prompt. When ambiguity prevents the model from producing the desired result, the user can specify which elements to retain in the foreground.</i>
-<p>
+  <video src="https://github.com/<your-org>/any-prompt-dis/raw/main/assets/demo/demo_text.mp4" controls muted width="80%"></video>
+</p>
 
-## News
-- **[May 15, 2026]** 🤗 Hugging Face Space released.
-- **[May 6, 2026]** 📄 Paper released on arXiv.
-- **[February 21, 2026]** 🎉 FlowDIS accepted to CVPR 2026.
+**Point click** — click the object you want; the VLM grounds it, FlowDIS segments it:
 
-## Requirements
+<p align="center">
+  <video src="https://github.com/<your-org>/any-prompt-dis/raw/main/assets/demo/demo_point.mp4" controls muted width="80%"></video>
+</p>
 
-- Python **3.12** (the project is tested on 3.12)
-- A CUDA-capable GPU (multi-GPU inference is supported)
+**Bounding box** — draw a box (optionally let the VLM auto-label it):
+
+<p align="center">
+  <video src="https://github.com/<your-org>/any-prompt-dis/raw/main/assets/demo/demo_bbox.mp4" controls muted width="80%"></video>
+</p>
+
+---
+
+## How it works
+
+```
+  image + (text | click | box)
+            │
+            ▼
+   ┌─────────────────────┐   bbox + object prompt
+   │  VLM grounding       │ ───────────────────────┐
+   │  (cloud or local)    │                         │
+   └─────────────────────┘                         ▼
+            │                              crop region (+ padding)
+            │                                       │
+            │                                       ▼
+            │                              ┌──────────────────┐
+            │                              │ FlowDIS segment  │
+            │                              │ on the clean crop│
+            │                              └──────────────────┘
+            │                                       │
+            ▼                                       ▼
+   full-image mask  ◄───────────── paste crop mask back into place
+```
+
+Why crop first? FlowDIS takes a *single* phrase as its text condition (T5/CLIP) and has no
+classifier-free guidance to amplify it, so it cannot resolve "the one on the *left*, not the
+right." Letting a VLM ground the target and segmenting just that crop sidesteps the
+ambiguity and gives FlowDIS a clean, tightly-framed input. See [`agent/pipeline.py`](agent/pipeline.py)
+(`ground_and_segment`, `segment_grounded`).
+
+---
 
 ## Installation
 
-Clone the repository and install the package:
-
 ```bash
-git clone https://github.com/Picsart-AI-Research/FlowDIS
-cd FlowDIS
+git clone https://github.com/<your-org>/any-prompt-dis
+cd any-prompt-dis
 pip install -e .
 ```
 
-## Models
+Requirements: Python 3.10–3.12 and a CUDA GPU (FlowDIS needs **≥ 48 GB** for 1024², more at
+higher resolution). FlowDIS weights download automatically from the Hugging Face Hub
+([`PAIR/FlowDIS`](https://huggingface.co/PAIR/FlowDIS)) on first run.
 
-Model weights are hosted on the Hugging Face Hub at [`PAIR/FlowDIS`](https://huggingface.co/PAIR/FlowDIS). They are downloaded automatically on first run and cached under `~/.cache/huggingface/hub`.
+## Grounding backend
 
-To pre-download manually:
+The default backend is a **cloud VLM over an HTTP API** — it uses no local GPU/VRAM, so
+FlowDIS stays resident and everything runs in one process. It speaks two request formats, so
+you can point it at any **OpenAI-compatible** endpoint (OpenAI, OpenRouter, vLLM, Together, …)
+or the **Google Gemini** native API. Configure with env vars (only the key is required):
 
-```python
-from flowdis.util import download_from_hf_hub
-root_model_dir = download_from_hf_hub("PAIR/FlowDIS")
-print(root_model_dir)
+```bash
+export VLM_API_KEY=...                 # your API key (or write it to ~/.config/anyprompt-dis/api_key)
+export VLM_API_FORMAT=openai           # "openai" (default) or "gemini"
+export VLM_MODEL=google/gemini-3.1-pro-preview   # model id for your provider
+# export VLM_API_BASE=https://api.openai.com/v1  # optional; defaults per format
+# export VLM_PROXY=http://host:port              # optional, only if you need a proxy
 ```
 
-## Inference
+For the Gemini native API:
 
-Run inference on a directory of images. If multiple GPUs are available, the workload is automatically split across them.
+```bash
+export VLM_API_KEY=...
+export VLM_API_FORMAT=gemini
+export VLM_MODEL=gemini-2.0-flash      # base URL defaults to the Gemini endpoint
+```
+
+An **offline local VLM** backend ([`agent/vlm.py`](agent/vlm.py), Qwen-VL) is also available;
+see [Local (offline) backend](#local-offline-vlm-backend-advanced).
+
+## Quick start
+
+### Interactive app (Gradio)
+
+```bash
+# FLOWDIS_DIR is optional; omit to auto-download weights from the HF Hub.
+export VLM_API_KEY=...
+python agent/gradio_app.py
+```
+
+Pick **Text prompt**, **Point click**, or **Bounding box**, and the app grounds → crops →
+segments, returning a mask overlay, an RGBA cutout, and a grounding debug view.
+
+### CLI — single image, text-grounded
+
+```bash
+python inference_grounded.py \
+    --image-path assets/examples/1.jpg \
+    --prompt "the tall bridge tower on the left, not the one on the right" \
+    --output-path out/mask.png \
+    --composite-path out/cutout.png \
+    --debug-path out/debug.png
+```
+
+It prints `object_prompt=... bbox=[...]` and writes the mask / cutout / grounding overlay.
+Use `--root-model-dir` for local FlowDIS weights, `--model` / `--api-format` to pick the
+cloud model and request format.
+
+### Library
+
+```python
+from PIL import Image
+from flowdis.util import load_models
+from agent.cloud_vlm import CloudVLM
+from agent.pipeline import ground_and_segment
+
+models = load_models(device="cuda")          # FlowDIS (weights auto-download)
+vlm = CloudVLM()                               # cloud grounding (needs VLM_API_KEY)
+
+image = Image.open("assets/examples/1.jpg").convert("RGB")
+mask, grounded, bbox_padded = ground_and_segment(
+    image, "the gold scissors, not the thread or tape", vlm, models,
+)
+print(grounded.label, grounded.bbox)           # object prompt + bounding box (orig pixels)
+mask.save("mask.png")
+```
+
+---
+
+## Plain FlowDIS (no grounding)
+
+The original FlowDIS entry points still work for keyword/empty-prompt segmentation.
+
+Batch over a directory (multi-GPU aware):
 
 ```bash
 python inference.py \
     --images-dir /path/to/images \
     --output-dir /path/to/output \
     --prompts-json /path/to/prompts.json \
-    --num-steps 2 \
-    --resolution 1024
+    --num-steps 2 --resolution 1024
 ```
 
-To use local weights instead of auto-downloading, pass `--root-model-dir`:
+Single image:
 
 ```bash
-python inference.py \
-    --root-model-dir /path/to/models \
-    --images-dir /path/to/images \
-    --output-dir /path/to/output
+python inference_si.py --image-path input.jpg --prompt "" --output-path mask.png
 ```
 
-### Arguments
-
-| Argument | Required | Default | Description |
-| --- | --- | --- | --- |
-| `--images-dir` | yes | – | Directory of input images (`.jpg`, `.jpeg`, `.png`); searched recursively. |
-| `--output-dir` | yes | – | Directory where predicted masks (`.png`) are written. |
-| `--root-model-dir` | no | `None` | Root directory of pre-downloaded weights. If omitted, weights are fetched from `PAIR/FlowDIS` on the Hugging Face Hub. |
-| `--prompts-json` | no | `None` | JSON mapping `{ "image_filename": "prompt" }`. If omitted, empty prompts are used. |
-| `--num-steps` | no | `2` | Number of flow-matching sampling steps. |
-| `--resolution` | no | `1024` | Image resolution used for inference. |
-
-### Prompts file format
-
-```json
-{
-    "image_001.jpg": "a red sports car",
-    "image_002.png": "a golden retriever sitting on grass"
-}
-```
-
-Pre-generated language prompts for the DIS dataset are available [here](https://drive.google.com/drive/folders/1ikCxZeJZcwcSHs1_EOQPRRM_Rb9q1pXo?usp=sharing). Precomputed results for reproducing the paper can be downloaded [here](https://drive.google.com/drive/folders/1PPMabkVyT2IQ-oE_t1mA92U9q-dfCZcC?usp=sharing).
- 
-
-## Demo
-
-An interactive Gradio demo is included under `demo/`:
-
-```bash
-python demo/app.py
-```
-
-Hardware requirements:
-
-- **At least 48 GB of GPU memory** for inference at 1024×1024px.
-- **80 GB of GPU memory** is required for inference at higher resolutions (such as 2048x2048px).
-
-## Programmatic usage
+Programmatic:
 
 ```python
 from PIL import Image
 from flowdis import flowdis_predict, load_models
 
 models = load_models(device="cuda")
-
-input_img_path = "path/to/input.jpg"     # Input image path
-output_mask_path = "path/to/output.png"  # Path to save the output mask
-
-image = Image.open(input_img_path).convert("RGB")
-
 mask = flowdis_predict(
-    image=image,
-    prompt="",  # Text prompt
-    models=models,
-    resolution=1024,
-    num_inference_steps=2,
-    device="cuda",
+    image=Image.open("input.jpg").convert("RGB"),
+    prompt="",                  # empty = unguided foreground segmentation
+    models=models, resolution=1024, num_inference_steps=2, device="cuda",
 )
-mask.save(output_mask_path)
+mask.save("mask.png")
 ```
 
-## License
+`--prompts-json` maps `{ "image.jpg": "a red sports car" }`. Pre-generated DIS prompts and
+precomputed paper results: see the [FlowDIS repo](https://github.com/Picsart-AI-Research/FlowDIS).
 
-FlowDIS is licensed under the [PicsArt Inc. FlowDIS Model License](https://github.com/Picsart-AI-Research/FlowDIS/blob/main/LICENSE).
+## Local (offline) VLM backend (advanced)
 
-## Acknowledgements
+To ground without a cloud call, use the local Qwen-VL backend. It needs the weights and a
+recent transformers:
 
-This project is built on top of [FLUX.1 [schnell]](https://github.com/black-forest-labs/flux) and [DIS5K](https://github.com/xuebinqin/DIS). 
-
-
-## BibTeX
-
-If you use our work in your research, please cite our publication:
-
+```bash
+export QWEN_VLM_PATH=/path/to/qwen-vl-weights     # required for the local backend
+pip install -U "transformers>=5"                  # local Qwen-VL needs transformers 5.x
 ```
+
+The 27B VLM (~54 GB) and FlowDIS cannot co-reside on one 96 GB GPU, so the batch CLI runs
+grounding in a child process first (freeing its VRAM) before loading FlowDIS:
+
+```bash
+python run_agent_seg.py --spec spec.json --output-dir out/ --stage all
+# spec.json: {"1.jpg": {"text": "..."}, "4.jpg": {"point": [950, 700]}}
+```
+
+---
+
+## Credits
+
+This project is a grounding layer built on **FlowDIS** by Andranik Sargsyan and Shant
+Navasardyan (Picsart AI Research, CVPR 2026). The FlowDIS core in [`flowdis/`](flowdis/) is
+their work; FlowDIS itself builds on [FLUX.1 [schnell]](https://github.com/black-forest-labs/flux)
+and [DIS5K](https://github.com/xuebinqin/DIS). If you use this work, please cite FlowDIS:
+
+```bibtex
 @article{sargsyan2026flowdis,
   title={{FlowDIS: Language-Guided Dichotomous Image Segmentation with Flow Matching}},
   author={Sargsyan, Andranik and Navasardyan, Shant},
   journal={arXiv preprint arXiv:2605.05077},
   year={2026},
-  eprint={2605.05077},
-  archivePrefix={arXiv},
   url={https://arxiv.org/abs/2605.05077}
 }
 ```
+
+## License
+
+The FlowDIS core and weights are governed by the
+[PicsArt Inc. FlowDIS Model License](LICENSE) — review it before any redistribution or
+commercial use. The `agent/` additions in this repository are provided under the same terms.

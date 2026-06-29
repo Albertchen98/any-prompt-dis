@@ -41,3 +41,24 @@ Thumbs.db
 
 outputs/
 .gradio/
+
+# Local output / result directories (not part of the release)
+agent_validation_out/
+flowdis_validation_out/
+grounded_out/
+flowdis_on_crop_out/
+gemini_crop_out/
+official_examples_out/
+single_image_out/
+*_out/
+
+# Local testing & dev-only tooling (kept out of the open-source release)
+tests/
+scripts/
+demo_recorder_plan.md
+agent/example_spec.json
+
+# Demo: keep the distributable MP4s; ignore raw recordings / intermediate GIFs / scratch
+assets/demo/*.webm
+assets/demo/*.gif
+assets/demo/test.webp
