@@ -214,6 +214,13 @@ python run_agent_seg.py --spec spec.json --output-dir out/ --stage all
 
 ---
 
+## Roadmap
+
+- [x] Any prompt (bounding box, point, text prompt)
+- [ ] Quantization of FlowDIS (runnable < 24 GB VRAM)
+- [ ] Part segmentation
+---
+
 ## Credits
 
 This project is a grounding layer built on **FlowDIS** by Andranik Sargsyan and Shant
