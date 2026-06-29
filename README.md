@@ -21,27 +21,26 @@ keyword. A VLM reasons about which object you mean and locates it (bounding box 
 ## Demos
 
 > Full-quality MP4s are committed under [`assets/demo/`](assets/demo/) and embedded with
-> `<video>` tags. **Replace `<your-org>` with your GitHub org/user** after you push, so the raw
-> URLs resolve and GitHub renders the inline player. (Alternatively, drag-drop each `.mp4` into
-> the README editor on github.com and paste the generated `user-attachments` URL — that also
-> auto-embeds and is fully self-contained.)
+> `<video>` tags pointing at the raw files in this repo. (If a player doesn't render on your
+> fork, drag-drop each `.mp4` into the README editor on github.com and paste the generated
+> `user-attachments` URL — that also auto-embeds and is fully self-contained.)
 
 **Text prompt** — disambiguate with language ("the tall bridge tower on the left, not the one on the right"):
 
 <p align="center">
-  <video src="https://github.com/<your-org>/any-prompt-dis/raw/main/assets/demo/demo_text.mp4" controls muted width="80%"></video>
+  <video src="https://github.com/Albertchen98/any-prompt-dis/raw/main/assets/demo/demo_text.mp4" controls muted width="80%"></video>
 </p>
 
 **Point click** — click the object you want; the VLM grounds it, FlowDIS segments it:
 
 <p align="center">
-  <video src="https://github.com/<your-org>/any-prompt-dis/raw/main/assets/demo/demo_point.mp4" controls muted width="80%"></video>
+  <video src="https://github.com/Albertchen98/any-prompt-dis/raw/main/assets/demo/demo_point.mp4" controls muted width="80%"></video>
 </p>
 
 **Bounding box** — draw a box (optionally let the VLM auto-label it):
 
 <p align="center">
-  <video src="https://github.com/<your-org>/any-prompt-dis/raw/main/assets/demo/demo_bbox.mp4" controls muted width="80%"></video>
+  <video src="https://github.com/Albertchen98/any-prompt-dis/raw/main/assets/demo/demo_bbox.mp4" controls muted width="80%"></video>
 </p>
 
 ---
@@ -79,7 +78,7 @@ ambiguity and gives FlowDIS a clean, tightly-framed input. See [`agent/pipeline.
 ## Installation
 
 ```bash
-git clone https://github.com/<your-org>/any-prompt-dis
+git clone https://github.com/Albertchen98/any-prompt-dis
 cd any-prompt-dis
 pip install -e .
 ```
