@@ -27,21 +27,15 @@ keyword. A VLM reasons about which object you mean and locates it (bounding box 
 
 **Text prompt** — disambiguate with language ("the tall bridge tower on the left, not the one on the right"):
 
-<p align="center">
-  <video src="https://github.com/Albertchen98/any-prompt-dis/raw/main/assets/demo/demo_text.mp4" controls muted width="80%"></video>
-</p>
+https://github.com/user-attachments/assets/7e559a6a-c77f-4963-901b-cae39e994a95
 
 **Point click** — click the object you want; the VLM grounds it, FlowDIS segments it:
 
-<p align="center">
-  <video src="https://github.com/Albertchen98/any-prompt-dis/raw/main/assets/demo/demo_point.mp4" controls muted width="80%"></video>
-</p>
+https://github.com/user-attachments/assets/893d29e0-e0f9-42fc-be00-64464cdf985a
 
 **Bounding box** — draw a box (optionally let the VLM auto-label it):
 
-<p align="center">
-  <video src="https://github.com/Albertchen98/any-prompt-dis/raw/main/assets/demo/demo_bbox.mp4" controls muted width="80%"></video>
-</p>
+https://github.com/user-attachments/assets/941dcb42-2f87-491a-a724-2b9871553425
 
 ---
 
