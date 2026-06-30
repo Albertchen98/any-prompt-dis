@@ -1,18 +1,17 @@
-"""Grounding contract: prompt templates, robust JSON parsing, and the
-model-space -> original-pixel coordinate conversion.
+"""Grounding contract: prompt templates, robust JSON parsing, and coordinate conversion.
 
-Qwen3.5-VL is asked to emit a single JSON object using the `bbox_2d` key it was
-trained on. The bounding box it returns is expressed in the *smart-resized* input
-space (the H x W the image processor actually fed the vision encoder), NOT the
-original image's pixel space. We recover that resized space exactly from the
-processor's `image_grid_thw` output and rescale back to original pixels.
+Both cloud and local VLM backends are asked to emit one JSON object with a short
+segmentation label plus a `bbox_2d` box. Cloud backends are explicitly requested to
+return normalized 0-1000 coordinates. The local Qwen backend has historically varied
+by checkpoint, so its converter tries normalized coordinates first, then resized-space
+and original-pixel fallbacks for compatibility.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 # --- output contract -----------------------------------------------------------
@@ -24,10 +23,18 @@ TEXT_GROUNDING_PROMPT = (
     "close attention to any negations or disambiguating conditions (for example "
     '"the one on the table, NOT the one on the stove").\n'
     "Then output ONLY a JSON object, with no other text, in exactly this format:\n"
-    '{{"label": "<short noun phrase for the chosen object>", "bbox_2d": [x1, y1, x2, y2]}}\n'
+    '{{"label": "<generic object name>", "bbox_2d": [x1, y1, x2, y2]}}\n'
     "Rules:\n"
-    "- bbox_2d is the pixel bounding box [left, top, right, bottom] of the chosen "
-    "object in the image.\n"
+    "- label is the SHORT, generic name of the object TYPE: a 1-3 word noun phrase. Do "
+    "NOT copy the disambiguating wording from the request — no colors, owners, "
+    "actions, or relative clauses (no 'ridden by ...', 'wearing ...', 'on the ...', "
+    "'not the ...'). The bounding box already encodes WHICH instance; the label only "
+    "names WHAT it is, as a clean segmentation prompt. Examples: 'the cup on the table, "
+    "not the one on the stove' -> 'cup'; 'the pedal kart ridden by the kid in a cyan "
+    "shirt' -> 'pedal kart'.\n"
+    "- bbox_2d is the bounding box [left, top, right, bottom] of the chosen object, "
+    "with coordinates NORMALIZED to the range 0-1000, where (0,0) is the top-left "
+    "corner of the image and (1000,1000) is the bottom-right corner.\n"
     "- Choose exactly ONE object. If the request excludes an object, do NOT return it.\n"
     "- Output the JSON only. No explanation, no markdown code fences.\n\n"
     'User request: "{user_prompt}"'
@@ -40,8 +47,9 @@ POINT_GROUNDING_PROMPT = (
     "Then output ONLY a JSON object, with no other text, in exactly this format:\n"
     '{"label": "<short noun phrase for that object>", "bbox_2d": [x1, y1, x2, y2]}\n'
     "Rules:\n"
-    "- bbox_2d is the bounding box [left, top, right, bottom] of the marked object, in "
-    "the image's own coordinates.\n"
+    "- bbox_2d is the bounding box [left, top, right, bottom] of the marked object, "
+    "with coordinates NORMALIZED to the range 0-1000, where (0,0) is the top-left "
+    "corner of the image and (1000,1000) is the bottom-right corner.\n"
     "- The bounding box must contain the red dot.\n"
     "- Judge purely from where the red dot appears in the image you see.\n"
     "- Output the JSON only. No explanation, no markdown code fences."
@@ -58,8 +66,15 @@ TEXT_GROUNDING_PROMPT_NORM = (
     "attention to any negations or disambiguating conditions (for example "
     '"the one on the table, NOT the one on the stove").\n'
     "Then output ONLY a JSON object, with no other text, in exactly this format:\n"
-    '{{"label": "<short noun phrase for the chosen object>", "bbox_2d": [x1, y1, x2, y2]}}\n'
+    '{{"label": "<generic object name>", "bbox_2d": [x1, y1, x2, y2]}}\n'
     "Rules:\n"
+    "- label is the SHORT, generic name of the object TYPE: a 1-3 word noun phrase. Do "
+    "NOT copy the disambiguating wording from the request — no colors, owners, "
+    "actions, or relative clauses (no 'ridden by ...', 'wearing ...', 'on the ...', "
+    "'not the ...'). The bounding box already encodes WHICH instance; the label only "
+    "names WHAT it is, as a clean segmentation prompt. Examples: 'the cup on the table, "
+    "not the one on the stove' -> 'cup'; 'the pedal kart ridden by the kid in a cyan "
+    "shirt' -> 'pedal kart'.\n"
     "- bbox_2d is the bounding box [left, top, right, bottom] of the chosen object, with "
     "coordinates NORMALIZED to the range 0-1000, where (0,0) is the top-left corner of "
     "the image and (1000,1000) is the bottom-right corner.\n"
@@ -125,13 +140,44 @@ class GroundingParseError(ValueError):
 # --- parsing -------------------------------------------------------------------
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.S)
-_OBJ_RE = re.compile(r"\{[^{}]*bbox_2d[^{}]*\}", re.S)
 _OBJ_RE_ALL = re.compile(r"\{[^{}]*bbox_2d[^{}]*\}", re.S)
 _FOUR_INTS_RE = re.compile(
     r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*"
     r"(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]"
 )
 _LABEL_RE = re.compile(r'"label"\s*:\s*"([^"]*)"')
+
+# Words that begin a relative/relational clause; we cut the label at the first one so
+# only the head noun phrase (the object's generic name) survives.
+_CLAUSE_MARKERS = re.compile(
+    r"\b(that|which|who|whom|whose|wearing|worn|ridden|riding|driven|driving|holding|"
+    r"held|carrying|sitting|seated|standing|lying|located|positioned|placed|labeled|"
+    r"marked|next|behind|under|above|below|near|beside|with|in|on|at|to)\b",
+    re.I,
+)
+
+
+def _object_phrase(label: str, max_words: int = 4) -> str:
+    """Reduce a grounding label to a short object phrase suitable for FlowDIS.
+
+    The VLM sometimes echoes the user's full disambiguating sentence into `label`
+    (e.g. "the pedal kart ridden by the kid in a cyan shirt"). FlowDIS wants a clean
+    object name on the already-cropped region, so we strip a leading article, cut at the
+    first relational/relative-clause marker, and cap the word count. This is a safety
+    net; the grounding prompt already asks for a short label, and an empty label is left
+    empty (FlowDIS then runs unguided).
+    """
+    s = " ".join(label.split()).strip().strip('"').strip()
+    if not s:
+        return ""
+    s = re.sub(r"^(the|a|an)\s+", "", s, flags=re.I)
+    m = _CLAUSE_MARKERS.search(s)
+    if m and m.start() > 0:
+        s = s[: m.start()].strip().rstrip(",")
+    words = s.split()
+    if len(words) > max_words:
+        s = " ".join(words[:max_words])
+    return s or " ".join(label.split()).strip()
 
 
 def parse_grounding(raw: str) -> dict:
@@ -153,7 +199,7 @@ def parse_grounding(raw: str) -> dict:
             bbox = obj.get("bbox_2d")
             if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
                 return {
-                    "label": str(obj.get("label", "")).strip(),
+                    "label": _object_phrase(str(obj.get("label", "")).strip()),
                     "bbox_2d": [float(v) for v in bbox],
                 }
         except (json.JSONDecodeError, TypeError, ValueError):
@@ -164,7 +210,7 @@ def parse_grounding(raw: str) -> dict:
     if nums:
         label_m = _LABEL_RE.search(text)
         return {
-            "label": (label_m.group(1).strip() if label_m else ""),
+            "label": _object_phrase(label_m.group(1).strip() if label_m else ""),
             "bbox_2d": [float(nums.group(i)) for i in range(1, 5)],
         }
 
@@ -258,5 +304,5 @@ def model_bbox_to_orig(
     for name, b in candidates:
         if _is_valid(b, W, H):
             return _clamp_box(b, W, H), name
-    # nothing clearly valid: fall back to the trained convention, flagged for review
-    return _clamp_box(candidates[0][1], W, H), "resized_abs_fallback"
+    # nothing clearly valid: fall back to the current trained convention, flagged for review
+    return _clamp_box(candidates[0][1], W, H), "norm_1000_fallback"

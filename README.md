@@ -25,7 +25,7 @@ keyword. A VLM reasons about which object you mean and locates it (bounding box 
 > fork, drag-drop each `.mp4` into the README editor on github.com and paste the generated
 > `user-attachments` URL — that also auto-embeds and is fully self-contained.)
 
-**Text prompt** — disambiguate with language ("the tall bridge tower on the left, not the one on the right"):
+**Text prompt** — describe the object you want in natural language; the VLM grounds it, FlowDIS segments it:
 
 https://github.com/user-attachments/assets/7e559a6a-c77f-4963-901b-cae39e994a95
 
@@ -36,6 +36,25 @@ https://github.com/user-attachments/assets/893d29e0-e0f9-42fc-be00-64464cdf985a
 **Bounding box** — draw a box (optionally let the VLM auto-label it):
 
 https://github.com/user-attachments/assets/941dcb42-2f87-491a-a724-2b9871553425
+
+---
+
+## Disambiguate Text Prompt
+
+When the prompt describes one instance among similar objects, the VLM first resolves the
+target and emits a structured grounding result. FlowDIS then segments only that grounded
+crop.
+
+**Input prompt:** `the pedal kart ridden by the kid wearing a cyan T-shirt`  
+**Grounding result:** `label="pedal kart"`, `bbox=[750, 436, 986, 578]`,
+`coord_hypothesis="norm_1000"`
+
+| Input | Grounding Result | Seg Overlay |
+|---|---|---|
+| <img src="assets/Playarena-Indoor.jpg" width="260"> | <img src="assets/disambiguate/grounding_result.png" width="260"> | <img src="assets/disambiguate/overlay.png" width="260"> |
+
+The grounding artifact is also saved as JSON, including the raw VLM response, under
+[`assets/disambiguate/grounding.json`](assets/disambiguate/grounding.json).
 
 ---
 
@@ -118,7 +137,7 @@ python agent/gradio_app.py
 ```
 
 Pick **Text prompt**, **Point click**, or **Bounding box**, and the app grounds → crops →
-segments, returning a mask overlay, an RGBA cutout, and a grounding debug view.
+segments, returning a mask overlay, an RGBA cutout, and a grounding result view.
 
 ### CLI — single image, text-grounded
 
@@ -128,10 +147,12 @@ python inference_grounded.py \
     --prompt "the tall bridge tower on the left, not the one on the right" \
     --output-path out/mask.png \
     --composite-path out/cutout.png \
-    --debug-path out/debug.png
+    --grounding-path out/grounding.json \
+    --grounding-result-path out/grounding_result.png \
+    --overlay-path out/overlay.png
 ```
 
-It prints `object_prompt=... bbox=[...]` and writes the mask / cutout / grounding overlay.
+It prints the grounding JSON and writes the mask / cutout / grounding result / mask overlay.
 Use `--root-model-dir` for local FlowDIS weights, `--model` / `--api-format` to pick the
 cloud model and request format.
 

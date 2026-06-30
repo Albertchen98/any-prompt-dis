@@ -11,13 +11,16 @@ pipeline runs in this one process. Example:
     python inference_grounded.py \
         --image-path assets/examples/1.jpg \
         --prompt "the left tower of the bridge, not the right one" \
-        --output-path out/1_mask.png --composite-path out/1_cutout.png --debug-path out/1_debug.png
+        --output-path out/1_mask.png --composite-path out/1_cutout.png \
+        --grounding-result-path out/1_grounding_result.png
 
 Set VLM_API_KEY (and optionally VLM_API_FORMAT=openai|gemini, VLM_API_BASE, VLM_PROXY).
 """
 
 import argparse
+import json
 import logging
+import random
 from pathlib import Path
 
 import torch
@@ -32,8 +35,8 @@ from agent.cloud_vlm import (
     DEFAULT_PROXY,
     CloudVLM,
 )
-from agent.pipeline import ground_and_segment
-from agent.viz import draw_debug, to_green_screen, to_transparent_png
+from agent.pipeline import segment_grounded
+from agent.viz import draw_grounding_result, to_green_screen, to_mask_overlay, to_transparent_png
 from flowdis.util import load_models
 
 logging.basicConfig(
@@ -54,7 +57,23 @@ def get_args() -> argparse.Namespace:
         help="Complex text description of the target object "
              '(e.g. "the cup on the table, NOT the one on the stove").',
     )
-    p.add_argument("--output-path", type=Path, required=True, help="Output mask PNG path.")
+    p.add_argument(
+        "--output-path",
+        type=Path,
+        default=None,
+        help="Output mask PNG path. Required unless --grounding-only is set.",
+    )
+    p.add_argument(
+        "--grounding-path",
+        type=Path,
+        default=None,
+        help="Optional JSON path for the VLM grounding result.",
+    )
+    p.add_argument(
+        "--grounding-only",
+        action="store_true",
+        help="Only run VLM grounding and bbox visualization; skip FlowDIS segmentation.",
+    )
     p.add_argument(
         "--composite-path", type=Path, default=None,
         help="Optional RGBA cutout (transparent background) output path.",
@@ -64,8 +83,22 @@ def get_args() -> argparse.Namespace:
         help="Optional green-screen composite output path.",
     )
     p.add_argument(
-        "--debug-path", type=Path, default=None,
-        help="Optional bbox/label overlay output path (sanity-check the grounding).",
+        "--overlay-path",
+        type=Path,
+        default=None,
+        help="Optional original-image preview with the mask shown as a random translucent color.",
+    )
+    p.add_argument(
+        "--overlay-opacity",
+        type=float,
+        default=0.55,
+        help="Opacity for --overlay-path mask tint.",
+    )
+    p.add_argument(
+        "--grounding-result-path",
+        type=Path,
+        default=None,
+        help="Optional original-image bbox/label overlay saved right after VLM grounding.",
     )
     p.add_argument(
         "--root-model-dir", type=Path, default=None,
@@ -98,7 +131,37 @@ def get_args() -> argparse.Namespace:
                    help="Max image side uploaded to the VLM (coords are normalized).")
     p.add_argument("--max-image-bytes", type=int, default=DEFAULT_MAX_IMAGE_BYTES,
                    help="Max VLM upload data-URL size in bytes (proxy-friendliness).")
-    return p.parse_args()
+    args = p.parse_args()
+    if not args.grounding_only and args.output_path is None:
+        p.error("--output-path is required unless --grounding-only is set.")
+    return args
+
+
+def save_grounding_outputs(
+    image: Image.Image,
+    grounded,
+    *,
+    grounding_path: Path | None = None,
+    grounding_result_path: Path | None = None,
+    bbox_padded: tuple[int, int, int, int] | None = None,
+) -> None:
+    """Save structured grounding and an original-image bbox overlay."""
+    if grounding_path is not None:
+        grounding_path.parent.mkdir(parents=True, exist_ok=True)
+        grounding_path.write_text(
+            json.dumps(grounded.to_dict(), indent=2, ensure_ascii=False) + "\n"
+        )
+        logger.info("Saved grounding JSON -> %s.", grounding_path)
+
+    if grounding_result_path is not None:
+        grounding_result_path.parent.mkdir(parents=True, exist_ok=True)
+        draw_grounding_result(
+            image,
+            bbox_raw=grounded.bbox,
+            bbox_padded=bbox_padded,
+            label=grounded.label,
+        ).save(grounding_result_path)
+        logger.info("Saved grounding result -> %s.", grounding_result_path)
 
 
 def main() -> int:
@@ -119,13 +182,32 @@ def main() -> int:
         api_base=args.api_base,
     )
 
+    logger.info("Grounding: prompt=%r", args.prompt)
+    grounded = vlm.ground_from_text(image, args.prompt, model=args.model)
+
+    logger.info(
+        "Grounded object_prompt=%r bbox=%s (coord=%s).",
+        grounded.label, grounded.bbox, grounded.coord_hypothesis,
+    )
+
+    save_grounding_outputs(
+        image,
+        grounded,
+        grounding_path=args.grounding_path,
+        grounding_result_path=args.grounding_result_path,
+    )
+
+    if args.grounding_only:
+        print(json.dumps(grounded.to_dict(), ensure_ascii=False))
+        return 0
+
     logger.info("Loading FlowDIS on %s.", args.device)
     models = load_models(root_model_dir=args.root_model_dir, device=args.device)
 
-    logger.info("Grounding + segmenting: prompt=%r", args.prompt)
-    full_mask, grounded, bbox_pad = ground_and_segment(
-        image, args.prompt, vlm, models,
-        model=args.model, resolution=args.resolution, num_steps=args.num_steps,
+    logger.info("Segmenting grounded crop.")
+    full_mask, bbox_pad = segment_grounded(
+        image, grounded, models,
+        resolution=args.resolution, num_steps=args.num_steps,
         pad_frac=args.pad_frac, device=args.device,
     )
 
@@ -148,15 +230,25 @@ def main() -> int:
         to_green_screen(image, full_mask).save(args.greenscreen_path)
         logger.info("Saved green-screen composite -> %s.", args.greenscreen_path)
 
-    if args.debug_path is not None:
-        args.debug_path.parent.mkdir(parents=True, exist_ok=True)
-        draw_debug(
-            image, bbox_raw=grounded.bbox, bbox_padded=bbox_pad, label=grounded.label
-        ).save(args.debug_path)
-        logger.info("Saved grounding overlay -> %s.", args.debug_path)
+    if args.overlay_path is not None:
+        rng = random.SystemRandom()
+        color = tuple(rng.randint(64, 255) for _ in range(3))
+        args.overlay_path.parent.mkdir(parents=True, exist_ok=True)
+        to_mask_overlay(
+            image,
+            full_mask,
+            color=color,
+            opacity=args.overlay_opacity,
+        ).save(args.overlay_path)
+        logger.info(
+            "Saved mask overlay -> %s (color=%s, opacity=%.2f).",
+            args.overlay_path,
+            color,
+            args.overlay_opacity,
+        )
 
     # Final machine-readable summary line: the bbox and object prompt the user asked for.
-    print(f"object_prompt={grounded.label!r} bbox={list(grounded.bbox)}")
+    print(json.dumps(grounded.to_dict(), ensure_ascii=False))
     return 0
 
 

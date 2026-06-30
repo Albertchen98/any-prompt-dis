@@ -1,0 +1,19 @@
+{
+  "label": "pedal kart",
+  "bbox": [
+    750,
+    436,
+    986,
+    578
+  ],
+  "source": "text",
+  "input": "the pedal kart ridden by the kid wearing a cyan T-shirt",
+  "raw": "```json\n{\"label\": \"pedal kart\", \"bbox_2d\": [750, 653, 986, 866]}\n```",
+  "coord_hypothesis": "norm_1000",
+  "bbox_model": [
+    750,
+    653,
+    986,
+    866
+  ]
+}

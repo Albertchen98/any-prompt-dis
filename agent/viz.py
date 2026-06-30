@@ -1,4 +1,4 @@
-"""Visualization helpers: click markers, debug overlays, and composites.
+"""Visualization helpers: click markers, grounding overlays, and composites.
 
 Reuses flowdis.util.green_screen for the green-screen variant and the demo/app.py
 transparent-PNG recipe for the RGBA composite.
@@ -7,7 +7,7 @@ transparent-PNG recipe for the RGBA composite.
 from __future__ import annotations
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from flowdis.util import green_screen
 
@@ -31,7 +31,7 @@ def draw_marker(image: Image.Image, point: tuple[int, int], radius: int | None =
     return img
 
 
-def draw_debug(
+def draw_grounding_result(
     image: Image.Image,
     bbox_raw: tuple[int, int, int, int] | None = None,
     bbox_padded: tuple[int, int, int, int] | None = None,
@@ -52,10 +52,80 @@ def draw_debug(
         draw.ellipse([x - r, y - r, x + r, y + r], fill=(255, 0, 0), outline=(255, 255, 255), width=2)
     if label:
         anchor = bbox_raw or bbox_padded
-        ty = max(0, (anchor[1] - 2 * lw) if anchor else 4)
-        tx = (anchor[0] if anchor else 4)
-        draw.text((tx + 3, ty), label, fill=(0, 255, 0))
+        font = _label_font(img.size)
+        margin = max(6, 2 * lw)
+        text_bbox = draw.textbbox((0, 0), label, font=font, stroke_width=max(1, lw // 2))
+        tw = text_bbox[2] - text_bbox[0]
+        th = text_bbox[3] - text_bbox[1]
+        tx, ty = _label_position(anchor, img.size, (tw, th), margin)
+        pad_x = max(5, lw)
+        pad_y = max(3, lw // 2)
+        draw.rectangle(
+            [tx - pad_x, ty - pad_y, tx + tw + pad_x, ty + th + pad_y],
+            fill=(0, 0, 0),
+        )
+        draw.text(
+            (tx, ty),
+            label,
+            fill=(0, 255, 0),
+            font=font,
+            stroke_width=max(1, lw // 2),
+            stroke_fill=(0, 0, 0),
+        )
     return img
+
+
+def draw_debug(*args, **kwargs) -> Image.Image:
+    """Backward-compatible alias for existing app and batch code."""
+    return draw_grounding_result(*args, **kwargs)
+
+
+def _label_font(image_size: tuple[int, int]) -> ImageFont.ImageFont:
+    size = max(18, int(round(0.026 * min(image_size))))
+    for path in (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
+    ):
+        try:
+            return ImageFont.truetype(path, size=size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _label_position(
+    anchor: tuple[int, int, int, int] | None,
+    image_size: tuple[int, int],
+    text_size: tuple[int, int],
+    margin: int,
+) -> tuple[int, int]:
+    W, H = image_size
+    tw, th = text_size
+    if anchor is None:
+        return margin, margin
+
+    x1, y1, x2, y2 = anchor
+    tx = max(margin, min(x1, W - tw - margin))
+    if y1 - th - 2 * margin >= 0:
+        return tx, y1 - th - 2 * margin
+    if y2 + 2 * margin + th <= H:
+        return tx, y2 + 2 * margin
+
+    candidates = [
+        (margin, margin),
+        (max(margin, W - tw - margin), margin),
+        (margin, max(margin, H - th - margin)),
+        (max(margin, W - tw - margin), max(margin, H - th - margin)),
+    ]
+    return min(candidates, key=lambda p: _rect_overlap((p[0], p[1], p[0] + tw, p[1] + th), anchor))
+
+
+def _rect_overlap(a, b) -> int:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    iw = max(0, min(ax2, bx2) - max(ax1, bx1))
+    ih = max(0, min(ay2, by2) - max(ay1, by1))
+    return iw * ih
 
 
 def binarize(mask: Image.Image, thresh: int = 127) -> np.ndarray:
