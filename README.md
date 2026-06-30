@@ -18,6 +18,25 @@ keyword. A VLM reasons about which object you mean and locates it (bounding box 
 
 ---
 
+## Disambiguate Text Prompt
+
+When the prompt describes one instance among similar objects, the VLM first resolves the
+target and emits a structured grounding result. FlowDIS then segments only that grounded
+crop.
+
+**Input prompt:** `the pedal kart ridden by the kid wearing a cyan T-shirt`  
+**Grounding result:** `label="pedal kart"`, `bbox=[750, 436, 986, 578]`,
+`coord_hypothesis="norm_1000"`
+
+| Input | Grounding Result | Seg Overlay |
+|---|---|---|
+| <img src="assets/Playarena-Indoor.jpg" width="260"> | <img src="assets/disambiguate/grounding_result.png" width="260"> | <img src="assets/disambiguate/overlay.png" width="260"> |
+
+The grounding artifact is also saved as JSON, including the raw VLM response, under
+[`assets/disambiguate/grounding.json`](assets/disambiguate/grounding.json).
+
+---
+
 ## Demos
 
 > Full-quality MP4s are committed under [`assets/demo/`](assets/demo/) and embedded with
@@ -36,25 +55,6 @@ https://github.com/user-attachments/assets/893d29e0-e0f9-42fc-be00-64464cdf985a
 **Bounding box** — draw a box (optionally let the VLM auto-label it):
 
 https://github.com/user-attachments/assets/941dcb42-2f87-491a-a724-2b9871553425
-
----
-
-## Disambiguate Text Prompt
-
-When the prompt describes one instance among similar objects, the VLM first resolves the
-target and emits a structured grounding result. FlowDIS then segments only that grounded
-crop.
-
-**Input prompt:** `the pedal kart ridden by the kid wearing a cyan T-shirt`  
-**Grounding result:** `label="pedal kart"`, `bbox=[750, 436, 986, 578]`,
-`coord_hypothesis="norm_1000"`
-
-| Input | Grounding Result | Seg Overlay |
-|---|---|---|
-| <img src="assets/Playarena-Indoor.jpg" width="260"> | <img src="assets/disambiguate/grounding_result.png" width="260"> | <img src="assets/disambiguate/overlay.png" width="260"> |
-
-The grounding artifact is also saved as JSON, including the raw VLM response, under
-[`assets/disambiguate/grounding.json`](assets/disambiguate/grounding.json).
 
 ---
 
