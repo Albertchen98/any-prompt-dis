@@ -6,6 +6,8 @@ Two modes:
   - Point: click the object in the image; the VLM confirms which object is under the dot.
 In both cases we crop the grounded region and run FlowDIS on the clean crop, then paste
 the mask back into a full-image result.
+A "Plain (no VLM)" mode runs FlowDIS directly on the full image with the raw prompt —
+no cloud call, no crop — as a baseline / offline fallback.
 
 Only FlowDIS runs locally (resident on GPU); grounding is a cloud API call, so there
 is no GPU/RAM contention and the app stays responsive.
@@ -41,22 +43,47 @@ import gradio as gr
 from PIL import Image
 
 from agent.cloud_vlm import DEFAULT_MODEL, GROUNDING_MODELS, CloudVLM
+from agent.crop import pad_and_clamp
 from agent.grounding import GroundedObject, GroundingParseError
 from agent.pipeline import segment_grounded
 from agent.viz import draw_debug, draw_marker, to_mask_overlay, to_transparent_png
+from flowdis.sampling import flowdis_predict
 
 FLOWDIS_DIR = os.environ.get("FLOWDIS_DIR")  # None -> auto-download from HF Hub (PAIR/FlowDIS)
 DEVICE = os.environ.get("FLOWDIS_DEVICE", "cuda")
+INT8 = os.environ.get("FLOWDIS_INT8", "0").lower() in ("1", "true", "yes")
+T5_INT4 = os.environ.get("FLOWDIS_T5_INT4", "0").lower() in ("1", "true", "yes")
 
 # --- load models once ----------------------------------------------------------
 logger.info("Loading FlowDIS (resident)...")
 from flowdis.util import load_models
 
 MODELS = load_models(
-    root_model_dir=Path(FLOWDIS_DIR) if FLOWDIS_DIR else None, device=DEVICE
+    root_model_dir=Path(FLOWDIS_DIR) if FLOWDIS_DIR else None,
+    device=DEVICE,
+    int8=INT8,
+    t5_int4=T5_INT4,
 )
-VLM = CloudVLM(model=DEFAULT_MODEL)
+# Grounding backend: "cloud" (default, API key needed) or "local" (Qwen-VL weights on GPU,
+# set QWEN_VLM_PATH; shares the GPU with FlowDIS, so mind VRAM).
+VLM_BACKEND = os.environ.get("VLM_BACKEND", "cloud").lower()
+if VLM_BACKEND == "local":
+    from agent.vlm import VLM as LocalVLM
+
+    logger.info("Loading local VLM (resident)...")
+    VLM = LocalVLM(device=DEVICE)
+else:
+    # The cloud VLM needs an API key; without one the app still serves "Plain (no VLM)" mode.
+    try:
+        VLM = CloudVLM(model=DEFAULT_MODEL)
+    except RuntimeError as e:
+        logger.warning("Cloud VLM unavailable (%s) — only Plain (no VLM) mode will work.", e)
+        VLM = None
 logger.info("Ready.")
+
+# Local Qwen-VL boxes are noticeably less tight than Gemini's, so pad the crop more
+# by default to make sure the whole object survives into the FlowDIS crop.
+PAD_FRAC_DEFAULT = 0.22 if VLM_BACKEND == "local" else 0.12
 
 
 def _image_fingerprint(image):
@@ -95,11 +122,12 @@ def on_select(input_img, orig_img, orig_fp, point, mode, evt: gr.SelectData):
     show a marked copy in the image box for visual feedback.
     """
     if mode != "Point click":
-        status = (
-            "Bounding box mode uses the box input only. Switch to Point click to select by clicking."
-            if mode == "Bounding box" else
-            "Text mode uses the prompt only. Switch to Point click to select by clicking."
-        )
+        if mode == "Bounding box":
+            status = "Bounding box mode uses the box input only. Switch to Point click to select by clicking."
+        elif mode == "Plain (no VLM)":
+            status = "Plain mode runs FlowDIS on the full image with the prompt only. Switch to Point click to select by clicking."
+        else:
+            status = "Text mode uses the prompt only. Switch to Point click to select by clicking."
         return (
             gr.update(),
             point,
@@ -164,11 +192,66 @@ def _parse_manual_bbox(text, image_size):
     return bbox
 
 
+def _require_vlm():
+    if VLM is None:
+        raise gr.Error(
+            "Cloud VLM is not configured (no API key found). Set VLM_API_KEY, or use "
+            "Plain (no VLM) mode / Bounding box mode with a manual prompt."
+        )
+    return VLM
+
+
+def _ground_from_text(image, text, model):
+    v = _require_vlm()
+    # The local backend is a single fixed checkpoint; only the cloud one takes a model id.
+    if VLM_BACKEND == "local":
+        return v.ground_from_text(image, text)
+    return v.ground_from_text(image, text, model=model)
+
+
+def _ground_from_point(image, point_xy, model):
+    v = _require_vlm()
+    if VLM_BACKEND == "local":
+        return v.ground_from_point(image, point_xy)
+    return v.ground_from_point(image, point_xy, model=model)
+
+
+def _label_crop(crop, model):
+    v = _require_vlm()
+    if VLM_BACKEND == "local":
+        raise gr.Error(
+            "The local VLM backend has no crop auto-label; type a FlowDIS prompt for the box."
+        )
+    return v.label_crop(crop, model=model)
+
+
 def _run(image, orig_img, orig_fp, mode, prompt, bbox_text, point, model, resolution, num_steps, pad_frac):
+    # Generator: yields intermediate UI updates so the grounding result shows up
+    # as soon as the VLM answers, instead of loading together with FlowDIS.
     # Use the clean original when the displayed image is the red-dot marked copy.
     image, clean_fp = _clean_image_for_run(image, orig_img, orig_fp, point)
 
+    # Plain mode: FlowDIS on the full image with the raw prompt — no VLM, no crop.
+    if mode == "Plain (no VLM)":
+        yield gr.update(), None, "⏳ **FlowDIS** running on the full image (no VLM)…", gr.update()
+        full_mask = flowdis_predict(
+            image=image, prompt=(prompt or "").strip(), models=MODELS,
+            resolution=int(resolution), num_inference_steps=int(num_steps), device=DEVICE,
+        )
+        preview = to_mask_overlay(image, full_mask)
+        composite = to_transparent_png(image, full_mask)
+        png_path = TEMP_DIR / f"{uuid.uuid4().hex}.png"
+        composite.save(png_path)
+        status = (
+            f"**Mode:** plain FlowDIS (no VLM, no crop)  \n"
+            f"**prompt:** {prompt.strip() if (prompt or '').strip() else '(empty — salient foreground)'}  \n"
+            f"**sizes:** image={image.size}, mask={full_mask.size}, preview={preview.size}"
+        )
+        yield (image, preview), None, status, gr.update(value=str(png_path), interactive=True)
+        return
+
     # 1) ground the target with the VLM
+    yield gr.update(), gr.update(), f"⏳ **Stage 1/2 — VLM grounding** ({'local' if VLM_BACKEND == 'local' else model})…", gr.update()
     try:
         if mode == "Bounding box":
             bbox = _parse_manual_bbox(bbox_text, image.size)
@@ -178,7 +261,7 @@ def _run(image, orig_img, orig_fp, mode, prompt, bbox_text, point, model, resolu
                 raw = ""
                 coord_hypothesis = "manual original pixels; manual prompt"
             else:
-                label, raw = VLM.label_crop(image.crop(bbox), model=model)
+                label, raw = _label_crop(image.crop(bbox), model)
                 coord_hypothesis = "manual original pixels; VLM crop label"
             g = GroundedObject(
                 label=label,
@@ -195,7 +278,7 @@ def _run(image, orig_img, orig_fp, mode, prompt, bbox_text, point, model, resolu
                 raise gr.Error("Point mode: click the object in the image first.")
             if isinstance(point, dict) and point.get("orig_fp") != clean_fp:
                 raise gr.Error("Point mode: the image changed after the click. Click the target again.")
-            g = VLM.ground_from_point(image, tuple(point_xy), model=model)
+            g = _ground_from_point(image, tuple(point_xy), model)
             if not _bbox_contains_point(g.bbox, point_xy):
                 raise gr.Error(
                     f"Grounding box {g.bbox} does not contain the clicked point {tuple(point_xy)}. "
@@ -204,7 +287,7 @@ def _run(image, orig_img, orig_fp, mode, prompt, bbox_text, point, model, resolu
         else:
             if not (prompt and prompt.strip()):
                 raise gr.Error("Text mode: enter a prompt describing the target.")
-            g = VLM.ground_from_text(image, prompt.strip(), model=model)
+            g = _ground_from_text(image, prompt.strip(), model)
     except GroundingParseError as e:
         raise gr.Error(f"VLM did not return a usable box. Raw: {e.raw[:200]}")
     except gr.Error:
@@ -212,9 +295,23 @@ def _run(image, orig_img, orig_fp, mode, prompt, bbox_text, point, model, resolu
     except Exception as e:  # network/proxy/etc
         raise gr.Error(f"Grounding failed: {e}")
 
+    # Grounding done — show the debug box right away, before FlowDIS starts.
+    bbox_pad = pad_and_clamp(g.bbox, image.size, pad_frac=pad_frac)
+    debug = draw_debug(
+        image, bbox_raw=g.bbox, bbox_padded=bbox_pad,
+        point=tuple(_point_xy(point)) if (mode == "Point click" and _point_xy(point)) else None,
+        label=g.label,
+    )
+    yield (
+        gr.update(), debug,
+        f"✅ **Stage 1/2 — grounded:** {g.label or '(unnamed)'} · bbox {g.bbox}  \n"
+        f"⏳ **Stage 2/2 — FlowDIS** segmenting the crop…",
+        gr.update(),
+    )
+
     # 2) crop (with padding) -> FlowDIS -> paste back. Shared with the CLI / library
     # so the object-prompt + crop contract lives in one place (agent.pipeline).
-    full_mask, bbox_pad = segment_grounded(
+    full_mask, _ = segment_grounded(
         image, g, MODELS,
         resolution=int(resolution), num_steps=int(num_steps),
         pad_frac=pad_frac, device=DEVICE,
@@ -223,26 +320,28 @@ def _run(image, orig_img, orig_fp, mode, prompt, bbox_text, point, model, resolu
     # 3) build outputs
     preview = to_mask_overlay(image, full_mask)     # same-size overlay for pixel-aligned viewing
     composite = to_transparent_png(image, full_mask)  # RGBA cutout, for download
-    debug = draw_debug(
-        image, bbox_raw=g.bbox, bbox_padded=bbox_pad,
-        point=tuple(_point_xy(point)) if (mode == "Point click" and _point_xy(point)) else None,
-        label=g.label,
-    )
     png_path = TEMP_DIR / f"{uuid.uuid4().hex}.png"
     composite.save(png_path)
 
+    if mode == "Bounding box" and (prompt or "").strip():
+        model_str = "manual bbox prompt (no VLM)"
+    elif VLM_BACKEND == "local":
+        model_str = f"local: {VLM.model_path}"
+    else:
+        model_str = model
     status = (
         f"**Target:** {g.label or '(unnamed)'}  \n"
         f"**bbox (orig px):** {g.bbox}  ·  **coord mode:** {g.coord_hypothesis}  \n"
         f"**sizes:** image={image.size}, mask={full_mask.size}, preview={preview.size}  \n"
-        f"**model:** {model if (mode != 'Bounding box' or not (prompt or '').strip()) else 'manual bbox prompt (no VLM)'}"
+        f"**model:** {model_str}"
     )
-    return (image, preview), debug, status, gr.update(value=str(png_path), interactive=True)
+    yield (image, preview), debug, status, gr.update(value=str(png_path), interactive=True)
 
 
 def _toggle_mode(mode, image, orig_img, orig_fp, point):
     is_point = mode == "Point click"
     is_box = mode == "Bounding box"
+    is_plain = mode == "Plain (no VLM)"
     restored = gr.update()
     status = ""
     if not is_point:
@@ -250,24 +349,34 @@ def _toggle_mode(mode, image, orig_img, orig_fp, point):
         if orig_img is not None and _image_fingerprint(image) == marked_fp:
             restored = orig_img
         point = None
-        status = (
-            "Bounding box mode active: drag on the image to fill the box, or type x1, y1, x2, y2 manually."
-            if is_box else
-            "Text mode active: clicks are ignored; segmentation uses the prompt."
-        )
+        if is_box:
+            status = "Bounding box mode active: drag on the image to fill the box, or type x1, y1, x2, y2 manually."
+        elif is_plain:
+            status = "Plain mode active: FlowDIS runs on the full image with the prompt below — no VLM call, no crop."
+        else:
+            status = "Text mode active: clicks are ignored; segmentation uses the prompt."
+    if is_box:
+        prompt_label = "FlowDIS prompt (optional)"
+        prompt_placeholder = "optional; leave blank to ask Gemini to label the box"
+    elif is_plain:
+        prompt_label = "FlowDIS prompt (optional)"
+        prompt_placeholder = "e.g. the gold scissors; leave blank for the salient foreground object"
+    else:
+        prompt_label = "Text prompt"
+        prompt_placeholder = "e.g. the cup on the table, not the one on the stove"
     return (
         gr.update(
             visible=not is_point,
-            label="FlowDIS prompt (optional)" if is_box else "Text prompt",
-            placeholder="optional; leave blank to ask Gemini to label the box" if is_box
-            else "e.g. the cup on the table, not the one on the stove",
+            label=prompt_label,
+            placeholder=prompt_placeholder,
         ),                                # prompt box
         gr.update(visible=is_point),      # point hint
         gr.update(visible=is_box),        # manual bbox box
         gr.update(
-            visible=True,
+            visible=not is_plain and VLM_BACKEND != "local",
             label="VLM for grounding/auto-label" if is_box else "Grounding VLM (cloud API)",
-        ),                                # VLM model dropdown
+        ),                                # VLM model dropdown (local backend: fixed checkpoint)
+        gr.update(visible=not is_plain),  # crop padding slider
         point,
         restored,
         status,
@@ -477,10 +586,11 @@ with gr.Blocks(title="FlowDIS Agent – Grounded Segmentation", css=_CSS, head=_
         with gr.Column(scale=1):
             input_image = gr.Image(label="Input image", type="pil", height=460, elem_id="agent-input")
             mode = gr.Radio(
-                ["Text prompt", "Point click", "Bounding box"],
+                ["Text prompt", "Point click", "Bounding box", "Plain (no VLM)"],
                 value="Text prompt",
                 label="Grounding mode",
-                info="Text/Point: VLM grounds target. Bounding box: manual box, optional VLM auto-label.",
+                info="Text/Point: VLM grounds target. Bounding box: manual box, optional VLM auto-label. "
+                     "Plain: FlowDIS on the full image, no VLM.",
                 elem_id="agent-mode",
             )
             prompt_box = gr.Textbox(
@@ -498,14 +608,16 @@ with gr.Blocks(title="FlowDIS Agent – Grounded Segmentation", css=_CSS, head=_
             )
             model_dd = gr.Dropdown(
                 GROUNDING_MODELS, value=DEFAULT_MODEL, label="Grounding / label VLM (cloud API)",
+                visible=VLM_BACKEND != "local",
             )
             with gr.Row():
-                resolution = gr.Slider(1024, 2048, value=1024, step=64, label="FlowDIS resolution",
+                resolution = gr.Slider(512, 2048, value=512, step=64, label="FlowDIS resolution",
                                        info="Detailed/background-heavy images need 1536-2048.")
                 num_steps = gr.Slider(1, 12, value=2, step=1, label="Steps",
                                       info="More steps = sharper, more stable masks.")
-            pad_frac = gr.Slider(0.0, 0.4, value=0.12, step=0.01, label="Crop padding",
-                                 info="Context around the grounded box.")
+            pad_frac = gr.Slider(0.0, 0.4, value=PAD_FRAC_DEFAULT, step=0.01, label="Crop padding",
+                                 info="Context around the grounded box. Local VLM boxes are less "
+                                      "accurate, so the local backend defaults to more padding.")
             run_btn = gr.Button("Segment", variant="primary")
 
         with gr.Column(scale=1):
@@ -537,7 +649,7 @@ with gr.Blocks(title="FlowDIS Agent – Grounded Segmentation", css=_CSS, head=_
     mode.change(
         _toggle_mode,
         inputs=[mode, input_image, orig_state, orig_fp_state, point_state],
-        outputs=[prompt_box, point_hint, bbox_box, model_dd, point_state, input_image, status],
+        outputs=[prompt_box, point_hint, bbox_box, model_dd, pad_frac, point_state, input_image, status],
     )
     input_image.select(
         on_select, inputs=[input_image, orig_state, orig_fp_state, point_state, mode],

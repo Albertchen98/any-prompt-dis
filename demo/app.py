@@ -33,7 +33,9 @@ from qwen import expand_prompt
 
 
 device = "cuda"
-models = load_models(device=device)
+INT8 = os.environ.get("FLOWDIS_INT8", "0").lower() in ("1", "true", "yes")
+T5_INT4 = os.environ.get("FLOWDIS_T5_INT4", "0").lower() in ("1", "true", "yes")
+models = load_models(device=device, int8=INT8, t5_int4=T5_INT4)
 
 
 def disable_download_btn():

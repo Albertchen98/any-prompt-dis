@@ -175,7 +175,7 @@ def to_rgb_preview(image: Image.Image, mask: Image.Image) -> Image.Image:
 def to_mask_overlay(
     image: Image.Image,
     mask: Image.Image,
-    color: tuple[int, int, int] = (0, 220, 120),
+    color: tuple[int, int, int] = (80, 170, 255),
     opacity: float = 0.55,
 ) -> Image.Image:
     """Same-size RGB overlay: tint the predicted mask over the original image."""
