@@ -175,9 +175,18 @@ hf download nunchaku-ai/nunchaku-t5 awq-int4-flux.1-t5xxl.safetensors \
     --local-dir <root_model_dir>/nunchaku-t5
 ```
 
-The INT8 DiT is produced from the bf16 transformer with
-[convert_to_quant](https://pypi.org/project/convert-to-quant/) (one-off, ~a few minutes;
-`flowdis/quant.py` reads the `_quantization_metadata` it embeds):
+The INT8 DiT is a pre-quantized download from
+[Albertchen96/FlowDIS-int8-convrot](https://huggingface.co/Albertchen96/FlowDIS-int8-convrot):
+
+```bash
+hf download Albertchen96/FlowDIS-int8-convrot flowdis-transformer-int8-convrot.safetensors \
+    --local-dir <root_model_dir>
+```
+
+Alternatively, produce it yourself from the bf16 transformer with
+[convert_to_quant](https://pypi.org/project/convert-to-quant/) — note this loads the bf16
+weights, so it needs more than 24 GB of memory (`flowdis/quant.py` reads the
+`_quantization_metadata` it embeds):
 
 ```bash
 pip install convert-to-quant
