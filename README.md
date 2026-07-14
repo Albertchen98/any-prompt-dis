@@ -8,6 +8,11 @@ keyword. A VLM reasons about which object you mean and locates it (bounding box 
 A quantized **low-VRAM** build (INT8 ConvRot DiT + INT4 T5, no CPU offload) runs the full
 pipeline on a 24 GB card — see [Updates](#updates).
 
+<p align="center">
+  <a href="https://huggingface.co/Albertchen96/FlowDIS-int8-convrot"><img src="https://img.shields.io/badge/🤗%20Quantized%20weights-FlowDIS--int8--convrot-yellow"></a>&ensp;
+  <a href="https://huggingface.co/PAIR/FlowDIS"><img src="https://img.shields.io/badge/🤗%20Base%20weights-PAIR%2FFlowDIS-yellow"></a>
+</p>
+
 ---
 
 ## Updates
@@ -17,7 +22,9 @@ pipeline on a 24 GB card — see [Updates](#updates).
   layers run **~1.5× faster** than their bf16 counterparts), and the T5-XXL encoder in
   AWQ-INT4 via [nunchaku](https://huggingface.co/nunchaku-ai/nunchaku-t5) (3 GB vs 9 GB
   weights). Enable with `--int8 --t5-int4` on the CLIs or
-  `FLOWDIS_INT8=1 FLOWDIS_T5_INT4=1` for the Gradio app.
+  `FLOWDIS_INT8=1 FLOWDIS_T5_INT4=1` for the Gradio app. Pre-quantized DiT:
+  [🤗 Albertchen96/FlowDIS-int8-convrot](https://huggingface.co/Albertchen96/FlowDIS-int8-convrot)
+  (see [Installation](#extra-dependencies-for-the-low-vram-mode---int8---t5-int4)).
 
   | | bf16 | low-VRAM (int8 + int4) |
   |---|---|---|
