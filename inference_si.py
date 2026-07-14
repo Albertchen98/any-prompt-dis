@@ -64,6 +64,16 @@ def get_args() -> argparse.Namespace:
         help="Torch device, for example cuda, cuda:0, or cpu.",
     )
     parser.add_argument(
+        "--int8",
+        action="store_true",
+        help="Use the INT8 ConvRot quantized transformer (lower VRAM, near-bf16 quality).",
+    )
+    parser.add_argument(
+        "--t5-int4",
+        action="store_true",
+        help="Use the nunchaku AWQ-INT4 T5 encoder (~3 GB instead of 9 GB, needs the nunchaku package).",
+    )
+    parser.add_argument(
         "--greenscreen-path",
         type=Path,
         default=None,
@@ -108,7 +118,7 @@ def main() -> int:
     args.output_path.parent.mkdir(parents=True, exist_ok=True)
 
     logger.info("Loading models on %s.", args.device)
-    models = load_models(root_model_dir=args.root_model_dir, device=args.device)
+    models = load_models(root_model_dir=args.root_model_dir, device=args.device, int8=args.int8, t5_int4=args.t5_int4)
 
     logger.info("Reading %s.", args.image_path)
     image = Image.open(args.image_path).convert("RGB")

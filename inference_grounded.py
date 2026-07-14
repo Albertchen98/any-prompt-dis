@@ -123,6 +123,10 @@ def get_args() -> argparse.Namespace:
         help="Fraction of the bbox size to pad the crop by, for clean context.",
     )
     p.add_argument("--device", type=str, default="cuda", help="Torch device for FlowDIS.")
+    p.add_argument("--int8", action="store_true",
+                   help="Use the INT8 ConvRot quantized transformer (lower VRAM, near-bf16 quality).")
+    p.add_argument("--t5-int4", action="store_true",
+                   help="Use the nunchaku AWQ-INT4 T5 encoder (~3 GB instead of 9 GB, needs the nunchaku package).")
     p.add_argument(
         "--proxy", type=str, default=DEFAULT_PROXY,
         help="HTTP(S) proxy for the cloud API call (or set VLM_PROXY). Pass '' to disable.",
@@ -202,7 +206,7 @@ def main() -> int:
         return 0
 
     logger.info("Loading FlowDIS on %s.", args.device)
-    models = load_models(root_model_dir=args.root_model_dir, device=args.device)
+    models = load_models(root_model_dir=args.root_model_dir, device=args.device, int8=args.int8, t5_int4=args.t5_int4)
 
     logger.info("Segmenting grounded crop.")
     full_mask, bbox_pad = segment_grounded(

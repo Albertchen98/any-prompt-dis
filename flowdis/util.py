@@ -10,7 +10,7 @@ from safetensors.torch import load_file
 from flowdis.autoencoder import AutoEncoder
 from flowdis.conditioner import HFEmbedder
 from flowdis.configs import configs
-from flowdis.loaders import load_autoencoder, load_clip, load_t5, load_transformer
+from flowdis.loaders import load_autoencoder, load_clip, load_t5, load_t5_int4, load_transformer
 from flowdis.model import Flux
 
 
@@ -27,16 +27,24 @@ class Models:
 
 def load_models(
     root_model_dir: Path = None,
-    device: str | torch.device = "cuda"
+    device: str | torch.device = "cuda",
+    int8: bool = False,
+    t5_int4: bool = False,
 ) -> Models:
     """
     Load the models for the FlowDIS pipeline.
-    
+
     Args:
         root_model_dir: The root model directory.
             If None, the models are downloaded from the Hugging Face Hub.
         device: The device to load the models on.
-    
+        int8: Load the INT8 ConvRot quantized transformer
+            (flowdis-transformer-int8-convrot.safetensors) instead of the
+            bfloat16 one. Roughly halves transformer VRAM at near-bf16 quality.
+        t5_int4: Load the nunchaku AWQ-INT4 T5 encoder
+            (nunchaku-t5/awq-int4-flux.1-t5xxl.safetensors, ~3 GB vs 9 GB).
+            Requires the `nunchaku` package.
+
     Returns:
         Models: The loaded models.
     """
@@ -44,11 +52,19 @@ def load_models(
         root_model_dir = download_from_hf_hub("PAIR/FlowDIS")
 
     logger.info("Loading T5.")
-    t5 = load_t5(
-        model_path=root_model_dir / "t5-v1_1-xxl" / "model.safetensors",
-        device=device,
-        max_length=512
-    )
+    if t5_int4:
+        t5 = load_t5_int4(
+            model_path=root_model_dir / "nunchaku-t5" / "awq-int4-flux.1-t5xxl.safetensors",
+            tokenizer_dir=root_model_dir / "t5-v1_1-xxl",
+            device=device,
+            max_length=512
+        )
+    else:
+        t5 = load_t5(
+            model_path=root_model_dir / "t5-v1_1-xxl" / "model.safetensors",
+            device=device,
+            max_length=512
+        )
     
     logger.info("Loading CLIP.")
     clip = load_clip(
@@ -63,9 +79,10 @@ def load_models(
     )
     
     logger.info("Loading Transformer.")
+    transformer_file = "flowdis-transformer-int8-convrot.safetensors" if int8 else "flowdis-transformer.safetensors"
     model = load_transformer(
         model_name="flowdis",
-        model_path=root_model_dir / "flowdis-transformer.safetensors",
+        model_path=root_model_dir / transformer_file,
         device=device,
     )
 

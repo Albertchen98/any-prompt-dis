@@ -9,4 +9,5 @@ python inference_grounded.py \
   --composite-path assets/disambiguate/cutout.png \
   --greenscreen-path assets/disambiguate/greenscreen.png \
   --overlay-path assets/disambiguate/overlay.png \
-  --grounding-result-path assets/disambiguate/grounding_result.png
+  --grounding-result-path assets/disambiguate/grounding_result.png \
+  --int8

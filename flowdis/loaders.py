@@ -6,6 +6,7 @@ from flowdis.autoencoder import AutoEncoder
 from flowdis.conditioner import HFEmbedder
 from flowdis.configs import configs
 from flowdis.model import Flux, FluxParams
+from flowdis.quant import is_quantized_state_dict, swap_quantized_linears
 
 
 def load_transformer(
@@ -23,8 +24,16 @@ def load_transformer(
             state_dict = load_file(model_path, device="cpu")
         else:
             state_dict = torch.load(model_path, map_location="cpu")
-    model.load_state_dict(state_dict, assign=True, strict=False)
-    model = model.to(device=device, dtype=torch.bfloat16)
+    if is_quantized_state_dict(state_dict):
+        # INT8 ConvRot checkpoint (ComfyUI-native format, made by ctq): swap the
+        # quantized Linears, then move without a dtype cast so the int8 weights
+        # and fp32 scales survive; the remaining params are already bf16.
+        swap_quantized_linears(model, state_dict)
+        model.load_state_dict(state_dict, assign=True, strict=False)
+        model = model.to(device=device)
+    else:
+        model.load_state_dict(state_dict, assign=True, strict=False)
+        model = model.to(device=device, dtype=torch.bfloat16)
     return model.eval()
 
 
@@ -55,8 +64,41 @@ def load_t5(
         )
     t5.to_empty(device="cpu")
     state_dict = load_file(model_path, device="cpu")
+    # The checkpoint stores only hf_module.shared.weight for the tied token
+    # embedding. Since transformers 5.x, encoder.embed_tokens is a separate
+    # module (tied post-init), and assign=True breaks that tie — so alias the
+    # key explicitly; both entries share one tensor, no extra memory.
+    if "hf_module.shared.weight" in state_dict:
+        state_dict.setdefault("hf_module.encoder.embed_tokens.weight", state_dict["hf_module.shared.weight"])
     t5.load_state_dict(state_dict, assign=True, strict=False)
     return t5.to(device=device, dtype=torch.bfloat16)
+
+
+def load_t5_int4(
+    model_path,
+    tokenizer_dir,
+    max_length: int = 512,
+    device: str | torch.device = "cuda",
+) -> HFEmbedder:
+    """Load the nunchaku AWQ-INT4 T5 encoder (W4A16, ~3 GB vs 9 GB bf16).
+
+    Expects the single-file checkpoint from nunchaku-ai/nunchaku-t5
+    (awq-int4-flux.1-t5xxl.safetensors); its T5Config ships in the
+    safetensors metadata, so only the tokenizer comes from tokenizer_dir.
+    """
+    from nunchaku import NunchakuT5EncoderModel  # optional dependency
+
+    with torch.device("meta"):
+        t5 = HFEmbedder(
+            tokenizer_dir,
+            max_length=max_length,
+            is_clip=False,
+            dtype=torch.bfloat16
+        )
+    t5.hf_module = NunchakuT5EncoderModel.from_pretrained(
+        model_path, torch_dtype=torch.bfloat16, device=device
+    ).eval()
+    return t5
 
 
 def load_clip(

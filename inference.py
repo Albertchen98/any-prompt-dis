@@ -73,6 +73,16 @@ def get_args():
         default=-1,
         help="Number of images to process"
     )
+    parser.add_argument(
+        "--int8",
+        action="store_true",
+        help="Use the INT8 ConvRot quantized transformer (lower VRAM, near-bf16 quality)"
+    )
+    parser.add_argument(
+        "--t5-int4",
+        action="store_true",
+        help="Use the nunchaku AWQ-INT4 T5 encoder (~3 GB instead of 9 GB, needs the nunchaku package)"
+    )
     return parser.parse_args()
 
 
@@ -122,7 +132,7 @@ def main():
     
     logger.info(f"Processing {len(img_paths)} images")
 
-    models = load_models(root_model_dir=args.root_model_dir, device="cpu")
+    models = load_models(root_model_dir=args.root_model_dir, device="cpu", int8=args.int8, t5_int4=args.t5_int4)
     
     if args.num_samples > 0:
         img_paths = img_paths[:args.num_samples]
