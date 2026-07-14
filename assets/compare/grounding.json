@@ -1,0 +1,12 @@
+{
+  "prompt": "dog collar",
+  "label": "dog collar",
+  "bbox": [
+    445,
+    527,
+    558,
+    620
+  ],
+  "coord_hypothesis": "norm_1000",
+  "raw": "{\"label\": \"dog collar\", \"bbox_2d\": [435, 515, 545, 605]}"
+}
