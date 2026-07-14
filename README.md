@@ -158,8 +158,38 @@ unrelated package. Install the prebuilt wheel matching your Python/torch/CUDA fr
 pip install https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu12.8torch2.10-cp312-cp312-linux_x86_64.whl
 ```
 
-The AWQ-INT4 T5 checkpoint (`nunchaku-t5/awq-int4-flux.1-t5xxl.safetensors`) is fetched
-with the rest of the weights.
+**Quantized weights.** The two quantized checkpoints live next to the regular weights
+under your FlowDIS model directory:
+
+```
+<root_model_dir>/
+├── flowdis-transformer-int8-convrot.safetensors   # INT8 ConvRot DiT (15.2 GB)
+└── nunchaku-t5/awq-int4-flux.1-t5xxl.safetensors  # AWQ-INT4 T5 (3 GB)
+```
+
+The INT4 T5 is a pre-quantized download from
+[nunchaku-ai/nunchaku-t5](https://huggingface.co/nunchaku-ai/nunchaku-t5):
+
+```bash
+hf download nunchaku-ai/nunchaku-t5 awq-int4-flux.1-t5xxl.safetensors \
+    --local-dir <root_model_dir>/nunchaku-t5
+```
+
+The INT8 DiT is produced from the bf16 transformer with
+[convert_to_quant](https://pypi.org/project/convert-to-quant/) (one-off, ~a few minutes;
+`flowdis/quant.py` reads the `_quantization_metadata` it embeds):
+
+```bash
+pip install convert-to-quant
+ctq -i <root_model_dir>/flowdis-transformer.safetensors \
+    -o <root_model_dir>/flowdis-transformer-int8-convrot.safetensors \
+    --comfy_quant --int8 --convrot --convrot-group-size 256 \
+    --exclude-layers "img_in|txt_in|time_in|vector_in|mod|final_layer" \
+    --save-quant-metadata
+```
+
+(Input/modulation/final layers stay bf16 — they are small but quality-critical; the 228
+`double_blocks`/`single_blocks` linears are quantized with group-256 Hadamard rotations.)
 
 ## Grounding backend
 
