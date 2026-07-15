@@ -31,7 +31,7 @@ pipeline on a 24 GB card — see [Updates](#updates).
   | Resident weights | 31.7 GiB | **17.4 GiB** (−45%) |
   | Peak VRAM, 512² end-to-end | 32.6 GiB | **18.4 GiB** (−44%) |
   | Peak VRAM, 1024² end-to-end | 35.2 GiB | **21.0 GiB** (−40%, fits a 24 GB card) |
-  | Inference speed, end-to-end | 1× | **~1.1×** (the un-quantized T5 encode and AE decode dominate the remaining time) |
+  | Inference speed, end-to-end | 1× | **~1.1×** (only the DiT linears get faster; the INT4 T5 saves memory rather than time, and AE decode / attention stay bf16) |
 
   <sub>End-to-end = T5 + CLIP + 2-step sampling + AE decode on a single image; peak VRAM is
   `torch.cuda.max_memory_allocated()`. The Gradio app defaults to 512² — segmentation runs
