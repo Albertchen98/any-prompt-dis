@@ -56,6 +56,7 @@ single_image_out/
 tests/
 scripts/*
 !scripts/run_official_examples.py
+!scripts/make_disambiguate_comparison.py
 demo_recorder_plan.md
 agent/example_spec.json
 
@@ -63,3 +64,4 @@ agent/example_spec.json
 assets/demo/*.webm
 assets/demo/*.gif
 assets/demo/test.webp
+assets/disambiguate/plain_flowdis_greenscreen.png

@@ -92,22 +92,38 @@ collar.
 
 ---
 
-## Disambiguate Text Prompt
+## Disambiguate Text Prompt vs. plain FlowDIS
 
-When the prompt describes one instance among similar objects, the VLM first resolves the
-target and emits a structured grounding result. FlowDIS then segments only that grounded
-crop.
+When a prompt describes one instance among similar objects, plain FlowDIS receives the
+complete scene and cannot reliably resolve the relationship. Our disambiguation flow first
+grounds the requested instance with a VLM, then runs FlowDIS on that grounded crop.
 
 **Input prompt:** `the pedal kart ridden by the kid wearing a cyan T-shirt`  
-**Grounding result:** `label="pedal kart"`, `bbox=[750, 436, 986, 578]`,
+**Grounding result:** `label="pedal kart"`, `bbox=[750, 434, 985, 577]`,
 `coord_hypothesis="norm_1000"`
 
-| Input | Grounding Result | Seg Overlay |
-|---|---|---|
-| <img src="assets/Playarena-Indoor.jpg" width="260"> | <img src="assets/disambiguate/grounding_result.png" width="260"> | <img src="assets/disambiguate/overlay.png" width="260"> |
+<p align="center">
+  <img src="assets/disambiguate/comparison/overview.png" width="700">
+</p>
+<p align="center"><sub>Full input scene. Orange: the shared display-only zoom region; green: the VLM-grounded target.</sub></p>
 
-The grounding artifact is also saved as JSON, including the raw VLM response, under
-[`assets/disambiguate/grounding.json`](assets/disambiguate/grounding.json).
+| Zoomed input | Plain FlowDIS | Disambiguate Text Prompt (ours) |
+|---|---|---|
+| <img src="assets/disambiguate/comparison/zoom_input.png" width="300"> | <img src="assets/disambiguate/comparison/zoom_plain_flowdis.png" width="300"> | <img src="assets/disambiguate/comparison/zoom_disambiguated.png" width="300"> |
+
+Plain FlowDIS keeps both pedal-kart instances, while the grounded flow selects only the red
+pedal kart driven by the child in the cyan T-shirt. Cyan fill and yellow contours show the
+predicted masks. Both results use the same user prompt, INT8 FlowDIS, 1024² resolution, and
+2 sampling steps. The identical orange ROI is applied **after inference only** to make the
+small objects legible; it does not change either prediction.
+
+The grounding artifact is saved as JSON, including the raw VLM response, under
+[`assets/disambiguate/grounding.json`](assets/disambiguate/grounding.json). Rebuild the
+display-only crops with:
+
+```bash
+python scripts/make_disambiguate_comparison.py
+```
 
 ---
 
