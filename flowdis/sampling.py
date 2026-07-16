@@ -125,7 +125,7 @@ def flowdis_predict(
     )
 
     pred_mask_latent_t = unpack(pred_mask_latent_t.float(), resolution, resolution)
-    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+    with torch.autocast(device_type=torch.device(device).type, dtype=torch.bfloat16):
         pred_mask_t = models.ae.decode(pred_mask_latent_t).clamp(-1, 1)
     
     pred_mask_t = rearrange(pred_mask_t[0], "c h w -> h w c")

@@ -9,6 +9,37 @@ from flowdis.model import Flux, FluxParams
 from flowdis.quant import is_quantized_state_dict, swap_quantized_linears
 
 
+def _remap_clip_state_dict(
+    clip: HFEmbedder,
+    state_dict: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    """Adapt CLIP checkpoint keys to the installed Transformers layout.
+
+    FlowDIS's checkpoint uses ``hf_module.text_model.*`` keys.  In
+    Transformers 5, ``CLIPTextModel`` exposes the same modules directly under
+    ``hf_module.*``.  Older Transformers releases still expect the checkpoint
+    layout, so only remap a key when the original key is not expected and the
+    stripped key is.
+    """
+    expected_keys = set(clip.state_dict())
+    checkpoint_prefix = "hf_module.text_model."
+    module_prefix = "hf_module."
+    remapped = {}
+
+    for key, value in state_dict.items():
+        candidate = (
+            module_prefix + key[len(checkpoint_prefix):]
+            if key.startswith(checkpoint_prefix)
+            else key
+        )
+        target_key = candidate if key not in expected_keys and candidate in expected_keys else key
+        if target_key in remapped:
+            raise ValueError(f"Duplicate CLIP key after remapping: {target_key}")
+        remapped[target_key] = value
+
+    return remapped
+
+
 def load_transformer(
     model_name: str,
     model_path: str,
@@ -112,6 +143,9 @@ def load_clip(
         dtype=torch.bfloat16
     )
     state_dict = load_file(model_path, device="cpu")
-    clip.load_state_dict(state_dict, assign=True, strict=False)
+    state_dict = _remap_clip_state_dict(clip, state_dict)
+    # Loading must be strict: silently retaining randomly initialized CLIP
+    # parameters makes otherwise deterministic inference vary by process.
+    clip.load_state_dict(state_dict, assign=True, strict=True)
     return clip.to(device=device, dtype=torch.bfloat16)
     

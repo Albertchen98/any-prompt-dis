@@ -44,6 +44,37 @@ pipeline on a 24 GB card — see [Updates](#updates).
 
 ---
 
+## Quantized quality — official examples (Plain, no VLM)
+
+The full low-VRAM stack (**INT8 ConvRot DiT + AWQ-INT4 T5**) preserves the
+segmentation quality of FlowDIS on the original paper examples, including thin
+structures such as spokes, wires, nets, and scissor blades. These results use
+**Plain (no VLM)** mode: each complete input image is passed directly to FlowDIS,
+with no VLM grounding, crop, or post-selection. Prompts, resolutions, and sampling
+steps come directly from [`assets/examples/examples.csv`](assets/examples/examples.csv).
+Green denotes the predicted background.
+
+Reproduce the results with:
+
+```bash
+python scripts/run_official_examples.py \
+  --root-model-dir <root_model_dir> \
+  --t5-int4 \
+  --output-dir official_examples_int8_int4_out
+```
+
+| Original input | Quantized output — INT8 DiT + INT4 T5 |
+|---|---|
+| <img src="assets/examples/0.jpg" width="360"><br><sub>`0.jpg` · empty prompt · 2048² · 8 steps</sub> | <img src="assets/quantized_official_examples/0.png" width="360"><br><sub>Plain (no VLM)</sub> |
+| <img src="assets/examples/1.jpg" width="360"><br><sub>`1.jpg` · empty prompt · 2048² · 8 steps</sub> | <img src="assets/quantized_official_examples/1.png" width="360"><br><sub>Plain (no VLM)</sub> |
+| <img src="assets/examples/2.png" width="360"><br><sub>`2.png` · empty prompt · 1536² · 4 steps</sub> | <img src="assets/quantized_official_examples/2.png" width="360"><br><sub>Plain (no VLM)</sub> |
+| <img src="assets/examples/3.jpg" width="360"><br><sub>`3.jpg` · empty prompt · 1536² · 2 steps</sub> | <img src="assets/quantized_official_examples/3.png" width="360"><br><sub>Plain (no VLM)</sub> |
+| <img src="assets/examples/4.jpg" width="360"><br><sub>`4.jpg` · prompt: `measuring tape` · 2048² · 8 steps</sub> | <img src="assets/quantized_official_examples/4.png" width="360"><br><sub>Plain (no VLM)</sub> |
+| <img src="assets/examples/5.jpg" width="360"><br><sub>`5.jpg` · prompt: `white shoes` · 1280² · 2 steps</sub> | <img src="assets/quantized_official_examples/5.png" width="360"><br><sub>Plain (no VLM)</sub> |
+| <img src="assets/examples/6.jpg" width="360"><br><sub>`6.jpg` · prompt: `bicycle` · 2048² · 8 steps</sub> | <img src="assets/quantized_official_examples/6.png" width="360"><br><sub>Plain (no VLM)</sub> |
+
+---
+
 ## Any Prompt DIS vs. plain FlowDIS
 
 Plain FlowDIS is trained for dichotomous (salient-object) segmentation: with a part-level

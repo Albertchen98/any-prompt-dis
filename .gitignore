@@ -54,7 +54,8 @@ single_image_out/
 
 # Local testing & dev-only tooling (kept out of the open-source release)
 tests/
-scripts/
+scripts/*
+!scripts/run_official_examples.py
 demo_recorder_plan.md
 agent/example_spec.json
 
